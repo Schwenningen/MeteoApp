@@ -4,42 +4,29 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.example.meteoapp.api.GeocodingApi
+import com.example.meteoapp.api.ApiClient
 import kotlinx.coroutines.launch
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
+
+private const val TAG = "MainActivity"
 
 class MainActivity : ComponentActivity() {
-    private val retrofit by lazy {
-        Retrofit.Builder()
-            .baseUrl(GeocodingApi.BASE_URL)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-    }
-
-    private val geocodingApi by lazy {
-        retrofit.create(GeocodingApi::class.java)
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContent {
             MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    GeocodingTest(geocodingApi)
+                    WeatherScreen()
                 }
             }
         }
@@ -47,43 +34,82 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun GeocodingTest(api: GeocodingApi) {
-    var result by remember { mutableStateOf("Press the button to test") }
-    val scope = rememberCoroutineScope()
-
-    Column(modifier = Modifier.padding(16.dp)) {
-        Button(
-            onClick = {
-                scope.launch {
-                    try {
-                        val response = api.searchLocation("Corte")
-                        if (response.isSuccessful) {
-                            val data = response.body()
-                            result = "Success!\nFirst result:\n" + 
-                                    (data?.results?.firstOrNull()?.let { location ->
-                                        """
-                                        City: ${location.name}
-                                        Country: ${location.country}
-                                        Latitude: ${location.latitude}
-                                        Longitude: ${location.longitude}
-                                        """.trimIndent()
-                                    } ?: "No results")
-                        } else {
-                            result = "Error: ${response.code()} ${response.message()}"
+fun WeatherScreen() {
+    var weatherText by remember { mutableStateOf("Loading...") }
+    
+    LaunchedEffect(Unit) {
+        try {
+            // First, get city coordinates
+            val geoResponse = ApiClient.geocodingApi.searchLocation("Paris")
+            
+            if (geoResponse.isSuccessful) {
+                val location = geoResponse.body()?.results?.firstOrNull()
+                
+                if (location != null) {
+                    weatherText = "Location found: ${location.name}, ${location.country}\n\nFetching weather data..."
+                    
+                    // Now get weather for the coordinates
+                    val weatherResponse = ApiClient.weatherApi.getWeatherForecast(
+                        latitude = location.latitude,
+                        longitude = location.longitude
+                    )
+                    
+                    if (weatherResponse.isSuccessful) {
+                        val weather = weatherResponse.body()
+                        weather?.let {
+                            weatherText = buildString {
+                                append("Location: ${location.name}, ${location.country}\n\n")
+                                append("Weather Data:\n")
+                                append("Coordinates: ${it.latitude}°N ${it.longitude}°E\n")
+                                append("Elevation: ${it.elevation}m\n")
+                                append("Timezone: ${it.timezone} ${it.timezoneAbbreviation}\n")
+                                append("UTC offset: ${it.utcOffsetSeconds}s\n\n")
+                                
+                                append("Temperature (next 5 hours):\n")
+                                it.hourly.times.zip(it.hourly.temperatures)
+                                    .take(5)
+                                    .forEach { (time, temp) ->
+                                        append("$time: $temp${it.hourlyUnits.temperatureUnit}\n")
+                                    }
+                                
+                                append("\nHumidity (next 5 hours):\n")
+                                it.hourly.times.zip(it.hourly.humidity)
+                                    .take(5)
+                                    .forEach { (time, humidity) ->
+                                        append("$time: $humidity${it.hourlyUnits.humidityUnit}\n")
+                                    }
+                                
+                                append("\nWind Speed (next 5 hours):\n")
+                                it.hourly.times.zip(it.hourly.windSpeed)
+                                    .take(5)
+                                    .forEach { (time, speed) ->
+                                        append("$time: $speed${it.hourlyUnits.windSpeedUnit}\n")
+                                    }
+                            }
                         }
-                    } catch (e: Exception) {
-                        Log.e("GeocodingTest", "Error", e)
-                        result = "Error: ${e.message}"
+                    } else {
+                        weatherText = "Error getting weather: ${weatherResponse.errorBody()?.string()}"
                     }
+                } else {
+                    weatherText = "City not found"
                 }
+            } else {
+                weatherText = "Geocoding error: ${geoResponse.errorBody()?.string()}"
             }
-        ) {
-            Text("Test API (search 'Corte')")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing request", e)
+            weatherText = "Error: ${e.message}"
         }
-
+    }
+    
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
         Text(
-            text = result,
-            modifier = Modifier.padding(top = 16.dp)
+            text = weatherText,
+            style = MaterialTheme.typography.bodyMedium
         )
     }
 }
