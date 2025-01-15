@@ -10,6 +10,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -25,6 +26,11 @@ import kotlinx.coroutines.launch
 
 private const val TAG = "MainActivity"
 
+// Énumération des types de météo pour différentes conditions météorologiques
+enum class WeatherType {
+    SUNNY, CLOUDY, RAINY
+}
+
 class MainActivity : ComponentActivity() {
     private var weatherText = "Chargement..."
     private lateinit var fusedLocationClient: FusedLocationProviderClient
@@ -36,15 +42,15 @@ class MainActivity : ComponentActivity() {
     ) { permissions ->
         when {
             permissions.getOrDefault(Manifest.permission.ACCESS_FINE_LOCATION, false) -> {
-                // Точное местоположение разрешено
+                // Accès à la localisation précise accordé
                 getCurrentLocation()
             }
             permissions.getOrDefault(Manifest.permission.ACCESS_COARSE_LOCATION, false) -> {
-                // Только приблизительное местоположение разрешено
+                // Accès à la localisation approximative uniquement accordé
                 getCurrentLocation()
             }
             else -> {
-                // Нет разрешений на местоположение
+                // Aucun accès à la localisation accordé
                 Toast.makeText(this, "L'autorisation de localisation est requise", Toast.LENGTH_LONG).show()
             }
         }
@@ -56,13 +62,13 @@ class MainActivity : ComponentActivity() {
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
-        // Setup RecyclerView for favorite cities
+        // Configuration du RecyclerView pour les villes favorites
         val recyclerView = findViewById<RecyclerView>(R.id.favoritesRecyclerView)
         recyclerView.layoutManager = LinearLayoutManager(this)
         favoritesAdapter = FavoritesAdapter()
         recyclerView.adapter = favoritesAdapter
 
-        // Setup search field
+        // Configuration du champ de recherche avec le listener IME
         val searchEditText = findViewById<EditText>(R.id.searchEditText)
         searchEditText.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
@@ -75,7 +81,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Request location permissions
+        // Demande des autorisations de localisation au démarrage
         requestLocationPermission()
     }
 
@@ -126,11 +132,23 @@ class MainActivity : ComponentActivity() {
             if (weatherResponse.isSuccessful) {
                 val weather = weatherResponse.body()
                 weather?.let {
+                    // Obtenir l'heure actuelle et trouver l'index correspondant dans les données horaires
+                    val currentHour = java.time.LocalTime.now().hour
+                    val currentIndex = it.hourly.times.indexOfFirst { time ->
+                        time.substring(11, 13).toInt() == currentHour
+                    }.coerceAtLeast(0)
+                    
+                    // Déterminer le type de météo en fonction des précipitations et de la couverture nuageuse
+                    val weatherType = when {
+                        it.hourly.precipitation[currentIndex] > 0.1 -> WeatherType.RAINY
+                        it.hourly.cloudCover[currentIndex] > 60 -> WeatherType.CLOUDY
+                        else -> WeatherType.SUNNY
+                    }
+
                     val weatherInfo = WeatherInfo(
                         cityName = "Position Actuelle",
-                        temperature = "${it.hourly.temperatures[0]}${it.hourlyUnits.temperatureUnit}",
-                        humidity = "${it.hourly.humidity[0]}${it.hourlyUnits.humidityUnit}",
-                        windSpeed = "${it.hourly.windSpeed[0]}${it.hourlyUnits.windSpeedUnit}",
+                        temperature = "${it.hourly.temperatures[currentIndex]}${it.hourlyUnits.temperatureUnit}",
+                        weatherType = weatherType,
                         isCurrentLocation = true
                     )
                     updateFavorites(weatherInfo)
@@ -158,11 +176,22 @@ class MainActivity : ComponentActivity() {
                     if (weatherResponse.isSuccessful) {
                         val weather = weatherResponse.body()
                         weather?.let {
+                            // Get current hour and find corresponding index in the hourly data
+                            val currentHour = 5
+                            val currentIndex = it.hourly.times.indexOfFirst { time ->
+                                time.substring(11, 13).toInt() == currentHour
+                            }.coerceAtLeast(0)
+
+                            val weatherType = when {
+                                it.hourly.precipitation[currentIndex] > 0.1 -> WeatherType.RAINY
+                                it.hourly.cloudCover[currentIndex] > 60 -> WeatherType.CLOUDY
+                                else -> WeatherType.SUNNY
+                            }
+
                             val weatherInfo = WeatherInfo(
                                 cityName = "${location.name}, ${location.country}",
-                                temperature = "${it.hourly.temperatures[0]}${it.hourlyUnits.temperatureUnit}",
-                                humidity = "${it.hourly.humidity[0]}${it.hourlyUnits.humidityUnit}",
-                                windSpeed = "${it.hourly.windSpeed[0]}${it.hourlyUnits.windSpeedUnit}",
+                                temperature = "${it.hourly.temperatures[currentIndex]}${it.hourlyUnits.temperatureUnit}",
+                                weatherType = weatherType,
                                 isCurrentLocation = false
                             )
                             updateFavorites(weatherInfo)
@@ -177,6 +206,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Mettre à jour la liste des favoris, en gardant la position actuelle en haut
     private fun updateFavorites(weatherInfo: WeatherInfo) {
         if (weatherInfo.isCurrentLocation) {
             favoriteLocations.removeAll { it.isCurrentLocation }
@@ -196,8 +226,7 @@ class MainActivity : ComponentActivity() {
 data class WeatherInfo(
     val cityName: String,
     val temperature: String,
-    val humidity: String,
-    val windSpeed: String,
+    val weatherType: WeatherType,
     val isCurrentLocation: Boolean
 )
 
@@ -221,17 +250,24 @@ class FavoritesAdapter : RecyclerView.Adapter<FavoritesAdapter.FavoriteViewHolde
 
     override fun getItemCount() = items.size
 
+    // ViewHolder pour afficher les informations météorologiques dans RecyclerView
     class FavoriteViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val cityNameText: TextView = itemView.findViewById(R.id.cityNameText)
         private val temperatureText: TextView = itemView.findViewById(R.id.temperatureText)
-        private val humidityText: TextView = itemView.findViewById(R.id.humidityText)
-        private val windSpeedText: TextView = itemView.findViewById(R.id.windSpeedText)
+        private val weatherIcon: ImageView = itemView.findViewById(R.id.weatherIcon)
 
         fun bind(weatherInfo: WeatherInfo) {
             cityNameText.text = weatherInfo.cityName
-            temperatureText.text = "Température: ${weatherInfo.temperature}"
-            humidityText.text = "Humidité: ${weatherInfo.humidity}"
-            windSpeedText.text = "Vitesse du vent: ${weatherInfo.windSpeed}"
+            temperatureText.text = weatherInfo.temperature
+            
+            // Définir l'icône météo en fonction du type de météo
+            weatherIcon.setImageResource(
+                when (weatherInfo.weatherType) {
+                    WeatherType.SUNNY -> R.drawable.ic_sunny
+                    WeatherType.CLOUDY -> R.drawable.ic_cloudy
+                    WeatherType.RAINY -> R.drawable.ic_rainy
+                }
+            )
         }
     }
 }
