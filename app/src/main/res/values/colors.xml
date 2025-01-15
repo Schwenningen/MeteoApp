@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Material Design default colors -->
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>
@@ -7,4 +8,20 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    
+    <!-- Основная цветовая палитра -->
+    <color name="primary_dark">#121212</color>    <!-- Черный для статус бара -->
+    <color name="primary">#2E7D32</color>         <!-- Темно-зеленый -->
+    <color name="primary_light">#388E3C</color>   <!-- Умеренно-зеленый -->
+    <color name="accent">#FF5722</color>          <!-- Оранжевый акцент -->
+    
+    <!-- Фоны -->
+    <color name="background_main">#121212</color> <!-- Темный фон -->
+    <color name="background_card">#1E1E1E</color> <!-- Темно-серый для карточек -->
+    <color name="surface_variant">#242424</color> <!-- Чуть светлее для элементов -->
+    
+    <!-- Текст -->
+    <color name="text_primary">#FFFFFF</color>    <!-- Белый -->
+    <color name="text_secondary">#B3FFFFFF</color><!-- Полупрозрачный белый (70%) -->
+    <color name="text_tertiary">#80FFFFFF</color> <!-- Полупрозрачный белый (50%) -->
 </resources>
