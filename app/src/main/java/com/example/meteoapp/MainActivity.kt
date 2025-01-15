@@ -23,6 +23,10 @@ import com.example.meteoapp.api.ApiClient
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.launch
+import com.example.meteoapp.model.LocationResult
+import androidx.cardview.widget.CardView
+import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.recyclerview.widget.DividerItemDecoration
 
 private const val TAG = "MainActivity"
 
@@ -36,6 +40,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private val favoriteLocations = mutableListOf<WeatherInfo>()
     private lateinit var favoritesAdapter: FavoritesAdapter
+    private lateinit var citySuggestionsAdapter: CitySuggestionsAdapter
+    private lateinit var citySuggestionsRecyclerView: RecyclerView
+    private lateinit var suggestionsCard: CardView
 
     private val locationPermissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -73,7 +80,7 @@ class MainActivity : ComponentActivity() {
         searchEditText.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 lifecycleScope.launch {
-                    fetchWeatherData(searchEditText.text.toString())
+                    searchCities(searchEditText.text.toString())
                 }
                 true
             } else {
@@ -83,6 +90,36 @@ class MainActivity : ComponentActivity() {
 
         // Demande des autorisations de localisation au démarrage
         requestLocationPermission()
+
+        // Настройка списка предложений городов
+        suggestionsCard = findViewById(R.id.suggestionsCard)
+        citySuggestionsRecyclerView = findViewById(R.id.citySuggestionsRecyclerView)
+        citySuggestionsRecyclerView.layoutManager = LinearLayoutManager(this)
+        citySuggestionsAdapter = CitySuggestionsAdapter { city ->
+            lifecycleScope.launch {
+                fetchWeatherData(city)
+                suggestionsCard.visibility = View.GONE
+                searchEditText.setText("")
+            }
+        }
+        citySuggestionsRecyclerView.adapter = citySuggestionsAdapter
+
+        citySuggestionsRecyclerView.addItemDecoration(
+            DividerItemDecoration(this, DividerItemDecoration.VERTICAL)
+        )
+
+        // Добавляем обработчик клика вне списка для его скрытия
+        findViewById<ConstraintLayout>(R.id.rootLayout).setOnClickListener {
+            suggestionsCard.visibility = View.GONE
+        }
+
+        // Добавляем обработчик клика для закрытия списка
+        findViewById<TextView>(R.id.favoritesTitle).setOnClickListener {
+            suggestionsCard.visibility = View.GONE
+        }
+        findViewById<RecyclerView>(R.id.favoritesRecyclerView).setOnClickListener {
+            suggestionsCard.visibility = View.GONE
+        }
     }
 
     private fun requestLocationPermission() {
@@ -160,49 +197,47 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private suspend fun fetchWeatherData(city: String) {
+    private suspend fun fetchWeatherData(city: LocationResult) {
         try {
-            val geoResponse = ApiClient.geocodingApi.searchLocation(city)
+            val weatherResponse = ApiClient.weatherApi.getWeatherForecast(
+                latitude = city.latitude,
+                longitude = city.longitude
+            )
             
-            if (geoResponse.isSuccessful) {
-                val location = geoResponse.body()?.results?.firstOrNull()
-                
-                if (location != null) {
-                    val weatherResponse = ApiClient.weatherApi.getWeatherForecast(
-                        latitude = location.latitude,
-                        longitude = location.longitude
-                    )
+            if (weatherResponse.isSuccessful) {
+                val weather = weatherResponse.body()
+                weather?.let {
+                    // Obtenir l'heure actuelle et trouver l'index correspondant dans les données horaires
+                    val currentHour = java.time.LocalTime.now().hour
+                    val currentIndex = it.hourly.times.indexOfFirst { time ->
+                        time.substring(11, 13).toInt() == currentHour
+                    }.coerceAtLeast(0)
                     
-                    if (weatherResponse.isSuccessful) {
-                        val weather = weatherResponse.body()
-                        weather?.let {
-                            // Get current hour and find corresponding index in the hourly data
-                            val currentHour = 5
-                            val currentIndex = it.hourly.times.indexOfFirst { time ->
-                                time.substring(11, 13).toInt() == currentHour
-                            }.coerceAtLeast(0)
-
-                            val weatherType = when {
-                                it.hourly.precipitation[currentIndex] > 0.1 -> WeatherType.RAINY
-                                it.hourly.cloudCover[currentIndex] > 60 -> WeatherType.CLOUDY
-                                else -> WeatherType.SUNNY
-                            }
-
-                            val weatherInfo = WeatherInfo(
-                                cityName = "${location.name}, ${location.country}",
-                                temperature = "${it.hourly.temperatures[currentIndex]}${it.hourlyUnits.temperatureUnit}",
-                                weatherType = weatherType,
-                                isCurrentLocation = false
-                            )
-                            updateFavorites(weatherInfo)
-                        }
+                    // Déterminer le type de météo en fonction des précipitations et de la couverture nuageuse
+                    val weatherType = when {
+                        it.hourly.precipitation[currentIndex] > 0.1 -> WeatherType.RAINY
+                        it.hourly.cloudCover[currentIndex] > 60 -> WeatherType.CLOUDY
+                        else -> WeatherType.SUNNY
                     }
+
+                    val weatherInfo = WeatherInfo(
+                        cityName = buildString {
+                            append(city.name)
+                            if (!city.admin1.isNullOrEmpty()) {
+                                append(", ${city.admin1}")
+                            }
+                            append(", ${city.country}")
+                        },
+                        temperature = "${it.hourly.temperatures[currentIndex]}${it.hourlyUnits.temperatureUnit}",
+                        weatherType = weatherType,
+                        isCurrentLocation = false
+                    )
+                    updateFavorites(weatherInfo)
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error executing request", e)
-            updateWeatherText("Erreur de géocodage: ${e.message}")
-            updateWeatherText("Erreur de récupération de la météo: ${e.message}")
+            Log.e(TAG, "Error fetching weather", e)
+            Toast.makeText(this, "Erreur météo: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -220,6 +255,27 @@ class MainActivity : ComponentActivity() {
     private fun updateWeatherText(newText: String) {
         weatherText = newText
         // Implementation of updateWeatherText method
+    }
+
+    // Новый метод для поиска городов
+    private suspend fun searchCities(query: String) {
+        try {
+            val response = ApiClient.geocodingApi.searchLocation(query)
+            if (response.isSuccessful) {
+                response.body()?.results?.let { cities ->
+                    if (cities.isNotEmpty()) {
+                        citySuggestionsAdapter.submitList(cities)
+                        suggestionsCard.visibility = View.VISIBLE
+                    } else {
+                        suggestionsCard.visibility = View.GONE
+                        Toast.makeText(this, "Aucune ville trouvée", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error searching cities", e)
+            Toast.makeText(this, "Erreur de recherche: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 }
 
