@@ -1,4 +1,4 @@
-packagepackage com.example.meteoapp.storage
+package com.example.meteoapp.storage
 
 import android.content.Context
 import com.google.gson.Gson
