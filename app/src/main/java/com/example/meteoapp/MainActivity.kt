@@ -1,6 +1,8 @@
 package com.example.meteoapp
 
+// Importations nécessaires pour l'application
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Bundle
@@ -23,10 +25,12 @@ import com.example.meteoapp.api.ApiClient
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.launch
-import com.example.meteoapp.model.LocationResult
 import androidx.cardview.widget.CardView
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.recyclerview.widget.DividerItemDecoration
+import android.content.Intent
+import com.example.meteoapp.storage.FavoriteCitiesStorage
+import java.util.Calendar
 
 private const val TAG = "MainActivity"
 
@@ -35,7 +39,9 @@ enum class WeatherType {
     SUNNY, CLOUDY, RAINY
 }
 
+// Activité principale de l'application
 class MainActivity : ComponentActivity() {
+    // Variables pour stocker les données météo et les favoris
     private var weatherText = "Chargement..."
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private val favoriteLocations = mutableListOf<WeatherInfo>()
@@ -43,7 +49,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var citySuggestionsAdapter: CitySuggestionsAdapter
     private lateinit var citySuggestionsRecyclerView: RecyclerView
     private lateinit var suggestionsCard: CardView
+    private val favoriteLocationsCoordinates = mutableMapOf<String, Pair<Double, Double>>()
+    private lateinit var favoriteCitiesStorage: FavoriteCitiesStorage
 
+    // Gestion des permissions de localisation
     private val locationPermissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -63,16 +72,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Méthode appelée lors de la création de l'activité
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Initialisation des services de localisation
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+        favoriteCitiesStorage = FavoriteCitiesStorage(this)
 
         // Configuration du RecyclerView pour les villes favorites
         val recyclerView = findViewById<RecyclerView>(R.id.favoritesRecyclerView)
         recyclerView.layoutManager = LinearLayoutManager(this)
         favoritesAdapter = FavoritesAdapter()
+        setupFavoritesAdapter()
         recyclerView.adapter = favoritesAdapter
 
         // Configuration du champ de recherche avec le listener IME
@@ -97,7 +110,18 @@ class MainActivity : ComponentActivity() {
         citySuggestionsRecyclerView.layoutManager = LinearLayoutManager(this)
         citySuggestionsAdapter = CitySuggestionsAdapter { city ->
             lifecycleScope.launch {
-                fetchWeatherData(city)
+                val intent = Intent(this@MainActivity, WeatherDetailActivity::class.java).apply {
+                    putExtra(WeatherDetailActivity.EXTRA_LATITUDE, city.latitude)
+                    putExtra(WeatherDetailActivity.EXTRA_LONGITUDE, city.longitude)
+                    putExtra(WeatherDetailActivity.EXTRA_CITY_NAME, buildString {
+                        append(city.name)
+                        if (!city.admin1.isNullOrEmpty()) {
+                            append(", ${city.admin1}")
+                        }
+                        append(", ${city.country}")
+                    })
+                }
+                startActivity(intent)
                 suggestionsCard.visibility = View.GONE
                 searchEditText.setText("")
             }
@@ -120,8 +144,21 @@ class MainActivity : ComponentActivity() {
         findViewById<RecyclerView>(R.id.favoritesRecyclerView).setOnClickListener {
             suggestionsCard.visibility = View.GONE
         }
+
+        // Загружаем сохраненные города при запуске
+        loadSavedCities()
     }
 
+    // Méthode appelée lors de la reprise de l'activité
+    override fun onResume() {
+        super.onResume()
+        // Очищаем текущий список избранного
+        favoriteLocations.clear()
+        // Загружаем актуальный список избранных городов
+        loadSavedCities()
+    }
+
+    // Demande des permissions de localisation
     private fun requestLocationPermission() {
         locationPermissionRequest.launch(
             arrayOf(
@@ -131,6 +168,7 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    // Obtient la localisation actuelle de l'utilisateur
     private fun getCurrentLocation() {
         if (ActivityCompat.checkSelfPermission(
                 this,
@@ -159,35 +197,42 @@ class MainActivity : ComponentActivity() {
             }
     }
 
-    private suspend fun fetchWeatherDataByCoordinates(latitude: Double, longitude: Double) {
+    // Récupère les données météo pour une localisation donnée
+    private suspend fun fetchWeatherDataByCoordinates(
+        latitude: Double,
+        longitude: Double,
+        cityName: String? = null,
+        isCurrentLocation: Boolean = false
+    ) {
         try {
             val weatherResponse = ApiClient.weatherApi.getWeatherForecast(
                 latitude = latitude,
                 longitude = longitude
             )
-            
+
             if (weatherResponse.isSuccessful) {
                 val weather = weatherResponse.body()
                 weather?.let {
-                    // Obtenir l'heure actuelle et trouver l'index correspondant dans les données horaires
-                    val currentHour = java.time.LocalTime.now().hour
+                    val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
                     val currentIndex = it.hourly.times.indexOfFirst { time ->
                         time.substring(11, 13).toInt() == currentHour
                     }.coerceAtLeast(0)
-                    
-                    // Déterminer le type de météo en fonction des précipitations et de la couverture nuageuse
+
                     val weatherType = when {
                         it.hourly.precipitation[currentIndex] > 0.1 -> WeatherType.RAINY
                         it.hourly.cloudCover[currentIndex] > 60 -> WeatherType.CLOUDY
                         else -> WeatherType.SUNNY
                     }
 
+                    val name = cityName ?: "Position Actuelle"
                     val weatherInfo = WeatherInfo(
-                        cityName = "Position Actuelle",
+                        cityName = name,
                         temperature = "${it.hourly.temperatures[currentIndex]}${it.hourlyUnits.temperatureUnit}",
                         weatherType = weatherType,
-                        isCurrentLocation = true
+                        isCurrentLocation = isCurrentLocation
                     )
+
+                    favoriteLocationsCoordinates[name] = Pair(latitude, longitude)
                     updateFavorites(weatherInfo)
                 }
             }
@@ -197,67 +242,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private suspend fun fetchWeatherData(city: LocationResult) {
-        try {
-            val weatherResponse = ApiClient.weatherApi.getWeatherForecast(
-                latitude = city.latitude,
-                longitude = city.longitude
-            )
-            
-            if (weatherResponse.isSuccessful) {
-                val weather = weatherResponse.body()
-                weather?.let {
-                    // Obtenir l'heure actuelle et trouver l'index correspondant dans les données horaires
-                    val currentHour = java.time.LocalTime.now().hour
-                    val currentIndex = it.hourly.times.indexOfFirst { time ->
-                        time.substring(11, 13).toInt() == currentHour
-                    }.coerceAtLeast(0)
-                    
-                    // Déterminer le type de météo en fonction des précipitations et de la couverture nuageuse
-                    val weatherType = when {
-                        it.hourly.precipitation[currentIndex] > 0.1 -> WeatherType.RAINY
-                        it.hourly.cloudCover[currentIndex] > 60 -> WeatherType.CLOUDY
-                        else -> WeatherType.SUNNY
-                    }
-
-                    val weatherInfo = WeatherInfo(
-                        cityName = buildString {
-                            append(city.name)
-                            if (!city.admin1.isNullOrEmpty()) {
-                                append(", ${city.admin1}")
-                            }
-                            append(", ${city.country}")
-                        },
-                        temperature = "${it.hourly.temperatures[currentIndex]}${it.hourlyUnits.temperatureUnit}",
-                        weatherType = weatherType,
-                        isCurrentLocation = false
-                    )
-                    updateFavorites(weatherInfo)
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error fetching weather", e)
-            Toast.makeText(this, "Erreur météo: ${e.message}", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    // Mettre à jour la liste des favoris, en gardant la position actuelle en haut
+    // Met à jour la liste des favoris, en gardant la position actuelle en haut
     private fun updateFavorites(weatherInfo: WeatherInfo) {
         if (weatherInfo.isCurrentLocation) {
             favoriteLocations.removeAll { it.isCurrentLocation }
             favoriteLocations.add(0, weatherInfo)
         } else {
-            favoriteLocations.add(weatherInfo)
+            if (!favoriteLocations.any { it.cityName == weatherInfo.cityName }) {
+                favoriteLocations.add(weatherInfo)
+            }
         }
         favoritesAdapter.submitList(favoriteLocations.toList())
     }
 
+    // Met à jour le texte de la météo
     private fun updateWeatherText(newText: String) {
         weatherText = newText
         // Implementation of updateWeatherText method
     }
 
-    // Новый метод для поиска городов
+    // Nouveau méthode pour rechercher des villes
     private suspend fun searchCities(query: String) {
         try {
             val response = ApiClient.geocodingApi.searchLocation(query)
@@ -277,8 +281,53 @@ class MainActivity : ComponentActivity() {
             Toast.makeText(this, "Erreur de recherche: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
+
+    // Charge les villes sauvegardées
+    private fun loadSavedCities() {
+        lifecycleScope.launch {
+            // Сначала загружаем текущую локацию
+            getCurrentLocation()
+
+            // Затем загружаем сохраненные города
+            val favorites = favoriteCitiesStorage.getFavoriteCities()
+            favorites.forEach { city ->
+                fetchWeatherDataByCoordinates(
+                    latitude = city.latitude,
+                    longitude = city.longitude,
+                    cityName = city.name,
+                    isCurrentLocation = city.isCurrentLocation
+                )
+            }
+        }
+    }
+
+    // Обновим FavoritesAdapter для поддержки удаления
+    private fun setupFavoritesAdapter() {
+        favoritesAdapter = FavoritesAdapter().apply {
+            setOnItemClickListener { weatherInfo ->
+                val coordinates = favoriteLocationsCoordinates[weatherInfo.cityName]
+                coordinates?.let {
+                    val intent = Intent(this@MainActivity, WeatherDetailActivity::class.java).apply {
+                        putExtra(WeatherDetailActivity.EXTRA_LATITUDE, it.first)
+                        putExtra(WeatherDetailActivity.EXTRA_LONGITUDE, it.second)
+                        putExtra(WeatherDetailActivity.EXTRA_CITY_NAME, weatherInfo.cityName)
+                    }
+                    startActivity(intent)
+                }
+            }
+
+            setOnItemLongClickListener { weatherInfo ->
+                if (!weatherInfo.isCurrentLocation) {
+                    favoriteCitiesStorage.removeFavoriteCity(weatherInfo.cityName)
+                    favoriteLocations.removeAll { it.cityName == weatherInfo.cityName }
+                    submitList(favoriteLocations.toList())
+                }
+            }
+        }
+    }
 }
 
+// Classe de données pour stocker les informations météo
 data class WeatherInfo(
     val cityName: String,
     val temperature: String,
@@ -286,44 +335,75 @@ data class WeatherInfo(
     val isCurrentLocation: Boolean
 )
 
+// Adaptateur pour afficher les villes favorites
 class FavoritesAdapter : RecyclerView.Adapter<FavoritesAdapter.FavoriteViewHolder>() {
     private var items = listOf<WeatherInfo>()
+    private var onItemClickListener: ((WeatherInfo) -> Unit)? = null
+    private var onItemLongClickListener: ((WeatherInfo) -> Unit)? = null
 
+    // Définit le gestionnaire de clics pour les éléments
+    fun setOnItemClickListener(listener: (WeatherInfo) -> Unit) {
+        onItemClickListener = listener
+    }
+
+    // Définit le gestionnaire de clics longs pour les éléments
+    fun setOnItemLongClickListener(listener: (WeatherInfo) -> Unit) {
+        onItemLongClickListener = listener
+    }
+
+    // Met à jour la liste des éléments et rafraîchit l'affichage
+    @SuppressLint("NotifyDataSetChanged")
     fun submitList(newItems: List<WeatherInfo>) {
         items = newItems
         notifyDataSetChanged()
     }
 
+    // Crée une nouvelle vue pour chaque élément de la liste
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FavoriteViewHolder {
         val view = LayoutInflater.from(parent.context)
             .inflate(R.layout.item_favorite, parent, false)
-        return FavoriteViewHolder(view)
+        return FavoriteViewHolder(view, onItemClickListener, onItemLongClickListener)
     }
 
+    // Lie les données d'un élément à la vue correspondante
     override fun onBindViewHolder(holder: FavoriteViewHolder, position: Int) {
         holder.bind(items[position])
     }
 
+    // Retourne le nombre total d'éléments dans la liste
     override fun getItemCount() = items.size
 
-    // ViewHolder pour afficher les informations météorologiques dans RecyclerView
-    class FavoriteViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+    // ViewHolder pour afficher les informations d'un élément favori
+    class FavoriteViewHolder(
+        itemView: View,
+        private val onItemClickListener: ((WeatherInfo) -> Unit)?,
+        private val onItemLongClickListener: ((WeatherInfo) -> Unit)?
+    ) : RecyclerView.ViewHolder(itemView) {
         private val cityNameText: TextView = itemView.findViewById(R.id.cityNameText)
         private val temperatureText: TextView = itemView.findViewById(R.id.temperatureText)
         private val weatherIcon: ImageView = itemView.findViewById(R.id.weatherIcon)
 
+        // Configure l'affichage des informations de l'élément
         fun bind(weatherInfo: WeatherInfo) {
             cityNameText.text = weatherInfo.cityName
             temperatureText.text = weatherInfo.temperature
-            
-            // Définir l'icône météo en fonction du type de météo
+
             weatherIcon.setImageResource(
                 when (weatherInfo.weatherType) {
-                    WeatherType.SUNNY -> R.drawable.ic_sunny
-                    WeatherType.CLOUDY -> R.drawable.ic_cloudy
-                    WeatherType.RAINY -> R.drawable.ic_rainy
+                    WeatherType.SUNNY -> R.drawable.day_clear
+                    WeatherType.CLOUDY -> R.drawable.day_cloudy
+                    WeatherType.RAINY -> R.drawable.day_rain
                 }
             )
+
+            itemView.setOnClickListener {
+                onItemClickListener?.invoke(weatherInfo)
+            }
+
+            itemView.setOnLongClickListener {
+                onItemLongClickListener?.invoke(weatherInfo)
+                true
+            }
         }
     }
 }

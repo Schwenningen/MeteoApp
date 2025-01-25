@@ -10,18 +10,21 @@
     <color name="white">#FFFFFFFF</color>
     
     <!-- Palette de couleurs principale -->
-    <color name="primary_dark">#121212</color>    <!-- Noir pour la barre d'état -->
+    <color name="primary_dark">#2E7D32</color>    <!-- Vert foncé pour la barre d'état -->
     <color name="primary">#2E7D32</color>         <!-- Vert foncé -->
-    <color name="primary_light">#388E3C</color>   <!-- Vert modéré -->
+    <color name="primary_light">#47C74C</color>   <!-- Vert modéré -->
     <color name="accent">#FF5722</color>          <!-- Orange pour l'accent -->
     
     <!-- Couleurs de fond -->
-    <color name="background_main">#121212</color> <!-- Fond sombre -->
-    <color name="background_card">#1E1E1E</color> <!-- Gris foncé pour les cartes -->
-    <color name="surface_variant">#242424</color> <!-- Un peu plus clair pour les éléments -->
+    <color name="background_main">#FFFFFF</color> <!-- Fond blanc -->
+    <color name="background_card">#F5F5F5</color> <!-- Gris très clair pour les cartes -->
+    <color name="surface_variant">#EEEEEE</color> <!-- Gris clair pour les éléments -->
     
     <!-- Couleurs du texte -->
-    <color name="text_primary">#FFFFFF</color>    <!-- Blanc -->
-    <color name="text_secondary">#B3FFFFFF</color><!-- Blanc semi-transparent (70%) -->
-    <color name="text_tertiary">#80FFFFFF</color> <!-- Blanc semi-transparent (50%) -->
+    <color name="text_primary">#212121</color>    <!-- Noir pour le texte principal -->
+    <color name="text_secondary">#757575</color>  <!-- Gris foncé pour le texte secondaire -->
+    <color name="text_tertiary">#9E9E9E</color>   <!-- Gris moyen pour le texte tertiaire -->
+    
+    <!-- Autres couleurs -->
+    <color name="divider">#BDBDBD</color>         <!-- Gris clair pour les séparateurs -->
 </resources>
